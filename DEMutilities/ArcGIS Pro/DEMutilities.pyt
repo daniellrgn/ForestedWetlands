@@ -3,7 +3,7 @@
  Source Name: DEMutilities.pyt
  Version:     1.0.0
  Author:      Daniel Miller, 2017
- Tools:       Surface Metrics, Topographic Wetness Index
+ Tools:       Surface Metrics, Topographic Wetness Index, Depth To Water
               
  Description: A set of tools for working with DEMs
 ----------------------------------------------------------------------------------'''
@@ -13,7 +13,7 @@ import os
 import subprocess
 import time
 import sys
-from arcpy import sa
+from arcpy.sa import Ln, Divide, ExtractValuesToPoints, NaturalNeighbor, Minus, Con
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 import netstream
@@ -27,7 +27,7 @@ class Toolbox(object):
         self.alias = "DEMutil"
 
         # List of tool classes associated with this toolbox
-        self.tools = [SurfaceMetrics, TopographicWetnessIndex]
+        self.tools = [SurfaceMetrics, TopographicWetnessIndex, DepthToWater]
 
 class SurfaceMetrics(object):
     def __init__(self):
@@ -312,7 +312,7 @@ class TopographicWetnessIndex(object):
             displayName = "Length Scale (m)",
             name = "Length Scale",
             datatype = "String",
-            parameterType = "Required",
+            parameterType = "Optional",
             direction = "Input"
         )
         
@@ -427,7 +427,10 @@ class TopographicWetnessIndex(object):
         DEMID = name[name.rfind('_')+1:len(name)]
         DEMunits = "m" if descDEM.spatialReference.metersPerUnit == 1.0 else "f"
 
-        length = parameters[1].valueAsText
+        if parameters[1].value:
+            length = parameters[1].valueAsText
+        else:
+            length = 0
         grad = parameters[2].valueAsText
         plan = parameters[3].valueAsText
         bcon = parameters[4].valueAsText
@@ -501,27 +504,126 @@ class TopographicWetnessIndex(object):
             raise
 
         accpath = scratchPath + "accum_" + DEMID + ".flt"
-        TWI = sa.Ln(sa.Divide(accpath, gradpath))
-        out_path = descDEM.path + "\\twi_" + length + ".tif"
-        TWI.save(out_path)
+        TWI = Ln(Divide(accpath, gradpath))
+        out_path = descDEM.path + "\\" + name + "_twi" + length + ".tif"
+        saveRaster(TWI, out_path, messages)
+        return
+
+class DepthToWater(object):
+    def __init__(self):
+        """"------------------------------------------------------------------------------------------------
+        Tool Name: Depth To Water
+        Version: 1.0.0, python 3.7, ArcGIS Pro
+        Author: Daniel Lorigan, 2019
+        Required arguments:
+            
+        Optional Arguments:
+            
+        Description: 
+        -------------------------------------------------------------------------------------------------"""
+        self.label = "Depth To Water"
+        self.description = "Calculate depth to water from a DEM and channel point shapefile"
+        self.canRunInBackground = False
+#------------------------------------------------------------------------------------------------------------
+    def getParameterInfo(self):
+        """Define parameter definitions""" 
+        param0 = arcpy.Parameter(
+            displayName="Input DEM",
+            name="DEM",
+            datatype="DERasterDataset",
+            parameterType="Required",
+            direction="Input"
+        ) 
+        
+        param1 = arcpy.Parameter(
+            displayName = "Input Channel Point Shapefile",
+            name = "nodefile",
+            datatype = "DEFeatureClass",
+            parameterType = "Required",
+            direction = "Input"
+        )
+        
+        param2 = arcpy.Parameter(
+            displayName = "Node Elevation Field",
+            name = "fieldname",
+            datatype = "String",
+            parameterType = "Optional",
+            direction = "Input"
+        )
+        param2.filter.type = "ValueList"
+        param2.filter.list = []
+
+        param3 = arcpy.Parameter(
+            displayName = "Output Folder",
+            name = "outfolder",
+            datatype = "DEFolder",
+            parameterType = "Optional",
+            direction = "Input"
+        )
+        
+        params = [param0, param1, param2, param3]
+
+        return params
+
+    def isLicensed(self):
+        """Set whether tool is licensed to execute."""
+        return True
+
+    def updateParameters(self, parameters):
+        """Modify the values and properties of parameters before internal
+        validation is performed.  This method is called whenever a parameter
+        has been changed."""
+        if parameters[1].value:
+            parameters[2].filter.list = [field.name for field in arcpy.ListFields(parameters[1].value)]
+        return
+
+    def updateMessages(self, parameters):
+        """Modify the messages created by internal validation for each tool
+        parameter.  This method is called after internal validation."""
+        return
+
+    def execute(self, parameters, messages):
+        """The source code of the tool."""
+        DEM = parameters[0].value
+        descDEM = arcpy.Describe(DEM)
+        printDEMInfo(descDEM, messages)
+        name = descDEM.basename
+        cellsize = descDEM.meanCellHeight
+        DEMunits = "m" if descDEM.spatialReference.metersPerUnit == 1.0 else "f"
+        
+        nodes = parameters[1].value
+        descNodes = arcpy.Describe(nodes)
+        messages.AddMessage("Node Shapefile: "+descNodes.path+"\\"+descNodes.name)
+
+        if parameters[2].value:
+            field = parameters[2].valueAsText
+        else:
+            if len(arcpy.FieldList(nodes, "ELEV_M")) > 0:
+                field = "ELEV_M"
+            else:
+                messages.AddErrorMessage("Unable to find node elevation field 'ELEV_M' in"+\
+                    arcpy.Describe(nodes).basename+\
+                    ". Specify the node elevation field of the shapefile.")
+                sys.exit(1)
+        messages.AddMessage("Node Elevation Field: "+field)
+
+        if parameters[3].value:
+            outfolder = parameters[3].valueAsText
+        else:
+            outfolder = descDEM.path
+        arcpy.SetProgressorLabel("Interpolating water table elevation")
+        WTSurface = NaturalNeighbor(nodes, field, cellsize)
+        arcpy.SetProgressorLabel("Calculating depth to water")
+        DTW = Minus(descDEM.catalogPath, WTSurface)
+        arcpy.SetProgressorLabel("Zeroing negative values")
+        DTW = Con(DTW < 0. and DTW != int(descDEM.noDataValue), 0., DTW)
+        outpath = outfolder+"\\"+name+"_dtw.tif"
+        saveRaster(DTW, outpath, messages)
         return
 
 #############################################################################
 ####### Helper functions ####################################################
 #############################################################################
-
-# Print DEM info messages
-# In: DEM description
-# Out: DEM path
-def printDEMInfo(desc, messages):
-    workingDir = os.getcwd()
-    filepath = desc.path + "\\" + desc.name
-    messages.addMessage("Working directory: " + workingDir)
-    messages.addMessage("DEM: " + filepath)
-    messages.addMessage("..datatype: " + desc.dataType)
-    if len(desc.extension) > 0:
-        messages.addMessage("..extension: " + desc.extension)
-    return filepath
 
 # Convert raster to .flt
 # In: DEM description, scratch path
@@ -590,6 +692,19 @@ def makeRasterList(desc, length, grad=False, plan=False, prof=False, bcon=False,
             messages.addMessage("  " + devRaster)
     return rasters
 
+# Print DEM info messages
+# In: DEM description
+# Out: DEM path
+def printDEMInfo(desc, messages):
+    workingDir = os.getcwd()
+    filepath = desc.path + "\\" + desc.name
+    messages.addMessage("Working directory: " + workingDir)
+    messages.addMessage("DEM: " + filepath)
+    messages.addMessage("..datatype: " + desc.dataType)
+    if len(desc.extension) > 0:
+        messages.addMessage("..extension: " + desc.extension)
+    return filepath
+
 # Create the MakeGrids input file
 # In: DEM, length scale, raster path list, scratch directory, full path of the MakeGrids executable, {toolname}
 # Out: the input file name used when calling MakeGrids
@@ -642,3 +757,7 @@ def findFile(filename, directory):
     finally:
         return foundFile
 
+# Save a raster to the specified path.
+def saveRaster(raster, path, messages=None):
+    raster.save(path)
+    messages.addMessage("Saved raster to " + path)
