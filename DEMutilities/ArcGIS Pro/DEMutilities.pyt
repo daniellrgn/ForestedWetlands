@@ -503,9 +503,9 @@ class TopographicWetnessIndex(object):
             messages.addErrorMessage('BuildGrids failed')
             raise
 
-        accpath = scratchPath + "accum_" + DEMID + ".flt"
+        accpath = descDEM.path + "\\accum_" + DEMID + ".flt"
         TWI = Ln(Divide(accpath, gradpath))
-        out_path = descDEM.path + "\\" + name + "_twi" + length + ".tif"
+        out_path = descDEM.path + "\\twi_" + length + ".tif"
         saveRaster(TWI, out_path, messages)
         return
 
