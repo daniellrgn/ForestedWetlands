@@ -262,7 +262,7 @@ tool_exec<- function(in_params, out_params){
   if (!is.null(outProbRaster) && !is.na(outProbRaster)) {
     
     arc.progress_label("Creating probability raster")
-    cat(paste0("Writing probabilities to ", outputProbRaster))
+    cat(paste0("Writing probabilities to ", outProbRaster))
     probs <- suppressWarnings(predictInParts(rasters, rfclass, outProbRaster))
     cat(paste0("Created GeoTiff probability raster ",outProbRaster[1]))
     

@@ -230,16 +230,16 @@ tool_exec<- function(in_params, out_params){
   #Print summaries of the independent variable values for wetland and not-a-wetland points
   className <- in_params[[5]][1]
   print(paste0("Class ", className))
-  print(summary(training[training$Class == in_params[[5]][1],]))
+  print(summary(training[training$Class == isWet[1],]))
   className <- in_params[[6]][1]
   print(paste0("Class ", className))
-  print(summary(training[training$Class == in_params[[6]][1],]))
+  print(summary(training[training$Class == notWet[1],]))
   
   #####################################################################################################
   ### Build Random Forest Model
   #####################################################################################################
   # Run the randomForest. 1st iteration.
-  arc.progress_label("Building random forest...")  
+  arc.progress_label("Building random forest...")
   rfclass <- randomForest(training[,-1], as.factor(training$Class), ntree=200, importance=TRUE)
 
   #####################################################################################################

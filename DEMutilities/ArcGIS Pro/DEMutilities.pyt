@@ -13,7 +13,7 @@ import os
 import subprocess
 import time
 import sys
-from arcpy.sa import Ln, Divide, ExtractValuesToPoints, NaturalNeighbor, Minus, Con
+from arcpy.sa import Ln, Divide, ExtractValuesToPoints, NaturalNeighbor, Minus, Con, IsNull
 
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
 import netstream
@@ -473,7 +473,7 @@ class TopographicWetnessIndex(object):
         inputfilename = str(scratchPath) + "input_buildGrids.txt"
         inputfile = open(inputfilename, 'w')
         inputfile.write("# Input file for BuildGrids\n")
-        inputfile.write("#    Created by ArcGIS python tool +" + self.label + "\n")
+        inputfile.write("#    Created by ArcGIS python tool " + self.label + "\n")
         inputfile.write("#      on " + time.asctime() + "\n")
         if DEM.index(".flt") > 1:
             inputfile.write("DEM: " + DEM[:-4] + "\n")
@@ -503,7 +503,7 @@ class TopographicWetnessIndex(object):
             messages.addErrorMessage('BuildGrids failed')
             raise
 
-        accpath = descDEM.path + "\\accum_" + DEMID + ".flt"
+        accpath = scratchPath + "accum_" + DEMID + ".flt"
         TWI = Ln(Divide(accpath, gradpath))
         out_path = descDEM.path + "\\twi_" + length + ".tif"
         saveRaster(TWI, out_path, messages)
@@ -560,8 +560,16 @@ class DepthToWater(object):
             parameterType = "Optional",
             direction = "Input"
         )
+
+        param4 = arcpy.Parameter(
+            displayName = "Save water table raster",
+            name = "wt",
+            datatype = "GPBoolean",
+            parameterType = "Optional",
+            direction = "Input"
+        )
         
-        params = [param0, param1, param2, param3]
+        params = [param0, param1, param2, param3, param4]
 
         return params
 
@@ -584,7 +592,7 @@ class DepthToWater(object):
 
     def execute(self, parameters, messages):
         """The source code of the tool."""
-        DEM = parameters[0].value
+        DEM = arcpy.Raster(parameters[0].valueAsText)
         descDEM = arcpy.Describe(DEM)
         printDEMInfo(descDEM, messages)
         name = descDEM.basename
@@ -611,14 +619,21 @@ class DepthToWater(object):
             outfolder = parameters[3].valueAsText
         else:
             outfolder = descDEM.path
+
+        arcpy.env.extent = DEM.extent
+        arcpy.env.snapRaster = DEM
+        arcpy.env.cellSize = cellsize
         arcpy.SetProgressorLabel("Interpolating water table elevation")
         WTSurface = NaturalNeighbor(nodes, field, cellsize)
+        WTSurface = Con(((WTSurface >= 0.0) | IsNull(WTSurface)), WTSurface, 0.0)
         arcpy.SetProgressorLabel("Calculating depth to water")
-        DTW = Minus(descDEM.catalogPath, WTSurface)
+        DTW = Con(IsNull(WTSurface), DEM, (DEM-WTSurface))
         arcpy.SetProgressorLabel("Zeroing negative values")
-        DTW = Con(DTW < 0. and DTW != int(descDEM.noDataValue), 0., DTW)
-        outpath = outfolder+"\\"+name+"_dtw.tif"
-        saveRaster(DTW, outpath, messages)
+        DTW = Con(((DTW >= 0.0) | IsNull(DTW)), Con((~IsNull(DEM) & IsNull(DTW)), DEM, DTW), 0.0)
+        outpath = outfolder+"\\"+name
+        if parameters[4].value:
+            saveRaster(WTSurface, outpath+"_wt.tif", messages)
+        saveRaster(DTW, outpath+"_dtw.tif", messages)
         return
 
 #############################################################################
